@@ -1,0 +1,63 @@
+- name: Deploy Static Web Application
+  hosts: web_server
+  become: yes
+
+  tasks:
+    - name: Ensure Nginx is installed
+      package: name=nginx state=present
+
+    - name: Create S3 bucket
+      aws_s3:
+        bucket: my-static-website
+        state: present
+
+    - name: Upload static files to S3
+      aws_s3:
+        bucket: my-static-website
+        region: us-east-1
+        acl: public-read
+        state: present
+        src: "{{ ansible_playbook_dir }}/files/"
+
+    - name: Configure Nginx for S3
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        force: yes
+
+    - name: Restart Nginx
+      service: name=nginx state=restarted
+
+    - name: Create CloudFront distribution
+      aws_cloudfront_distribution:
+        state: present
+        origins:
+          - domain_name: "{{ my_s3_bucket_url }}"
+          - origin_path: "/"
+        default_cache_behavior:
+          target_origin_id: S3
+          viewer_protocol_policy: https-only
+          allowed_methods:
+            - GET
+            - HEAD
+            - OPTIONS
+          cached_methods:
+            - GET
+            - HEAD
+          forwarded_headers:
+            cookies: false
+            query_string: false
+            headers:
+              - User-Agent
+              - Referer
+        distribution_config:
+          comment: My Static Website
+          price_class: PriceClass_100
+
+    - name: Update DNS
+      aws_route53_record:
+        state: present
+        name: mydomain.com
+        type: A
+        zone_id: my_route53_zone_id
+        value: "{{ cloudfront_distribution.distribution.domain_name }}"
